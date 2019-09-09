@@ -1,0 +1,127 @@
+#!/usr/bin/env groovy
+@Library('cmg-jenkins-shared-libraries@master') _
+
+pipeline {
+
+    agent {
+        node 'jenkins-slave-01'
+    }
+    parameters {
+      string(
+  			name: 'commit_id',
+  			defaultValue: "",
+  			description: 'Enter Commit ID to be used else lastest commit on develop branch will be used.'
+  		)
+    }
+
+    stages {
+      stage('Preparation') {
+  			steps {
+  				cleanWs()
+  				script {
+  					if ( params.commit_id == "" ) {
+  						echo "No Commit ID Provided"
+  						commit_id = sh(returnStdout: true, script: 'git ls-remote git@gitlab01.awscmg-dev.dwpcloud.uk:cmg-next-generation-services/cmg-online/cmg-online-revive.git refs/heads/develop | cut -f1').trim()
+  						env.commitID = "${commit_id}"
+  					} else {
+  						echo "Commit ID Provided [${params.commit_id}]"
+  						env.commitID = "${params.commit_id}"
+  					}
+
+  					checkout([$class: 'GitSCM', \
+  						branches: [[name: "${env.commitID}"]], \
+  						doGenerateSubmoduleConfigurations: false, \
+  						userRemoteConfigs: [[credentialsId: '08520488-2fab-49e2-b704-5f809ad72754', url: 'git@gitlab01.awscmg-dev.dwpcloud.uk:cmg-next-generation-services/cmg-online/cmg-online-revive.git']]
+  					])
+  					env.PROJECT_NAME = 'cmg-online-revive@online'
+  					env.BRANCH_NAME = env.GIT_BRANCH
+  					env.NODEJS_HOME = "${tool 'NodeJS-12.8.0'}"
+  					echo "NODEJS_HOME: ${env.NODEJS_HOME}"
+  					env.PATH="${env.NODEJS_HOME}/bin:${env.PATH}"
+
+  				}
+  			}
+  		}
+	    stage('Creating AMI for Online Revive') {
+        steps {
+  					echo "Building RPM and then AMI against commitID [${env.commitID}]"
+  					build job: 'RPM-AMI/cmg-rpm-ami', \
+  					parameters: [
+  						[$class: 'StringParameterValue'  , name: 'repo_name', value: 'cmg-online/cmg-online-revive'],
+  						[$class: 'StringParameterValue'  , name: 'environment', value: 'ithc'],
+  						[$class: 'StringParameterValue'  , name: 'commit_id', 	value: "${env.commitID}"],
+  						[$class: 'BooleanParameterValue' , name: 'createRpm',   value: true],
+  						[$class: 'BooleanParameterValue' , name: 'buildAMI', 		value: true],
+  						[$class: 'BooleanParameterValue' , name: 'createInfra', value: "${params.updateInfra}"],
+  					], wait: true
+  			}
+      }
+
+      stage ('Creating Infrastructure for Online Revive'){
+        environment {
+		      new_ami_id = sh (
+          script: "tail -2 /tmp/packer_build_cmg-online-revive_ithc | head -1| awk -F: '{print \$2}' | sed 's/ //g'",
+          returnStdout: true
+          ).trim()
+          ami_version = sh (
+          script:  "aws ec2 describe-tags --filters \"Name=resource-id,Values=${new_ami_id}\" \"Name=key,Values=Version\"  --region eu-west-2 --output=text 2>/dev/null | cut -f5",
+          returnStdout: true
+          ).trim()
+        }
+
+        steps {
+          //echo "New AMI Version: [${env.ami_version}]"
+          build job: 'cmg-devops/cmg-terraform-run', \
+          parameters: [
+            [$class: 'StringParameterValue'  , name: 'application',          value: "cms-online"],
+            [$class: 'StringParameterValue'  , name: 'repo_name',            value: "online-app"],
+            [$class: 'StringParameterValue'  , name: 'repo_branch',          value: "master"],
+            [$class: 'StringParameterValue'  , name: 'workspace',            value: "dev-ithc-env"],
+            [$class: 'StringParameterValue'  , name: 'Version',              value: "${env.ami_version}"],
+            [$class: 'StringParameterValue'  , name: 'version_weight',       value: "100"],
+            [$class: 'StringParameterValue'  , name: 'tfvar_name',           value: "terraform.tfvars"],
+			      [$class: 'BooleanParameterValue' , name: 'planInfrastructure',   value: true],
+			      //[$class: 'BooleanParameterValue' , name: 'createInfrastructure', value: true],
+          ], wait: true
+        }
+	    }
+
+      stage ('Running Automation Tests'){
+        environment {
+          run_date = sh (
+            script: "date +%Y%m%d",
+            returnStdout: true
+          ).trim()
+        }
+        steps {
+          sleep 900; // Sleeping the job for 15 min
+          build job: 'cmg-online-revive-ui-automation', \
+          parameters: [
+            [$class: 'StringParameterValue'  , name: 'session_name', value: "JenkinsTest-${env.run_date}"],
+            [$class: 'StringParameterValue'  , name: 'build_number', value: "Run-Day-${env.run_date}"],
+            [$class: 'StringParameterValue'  , name: 'techstack',    value: "BROWSERSTACK_MULTI"],
+            [$class: 'StringParameterValue'  , name: 'testsuite',    value: "browsertestsAllParallel"],
+            [$class: 'BooleanParameterValue' , name: 'screenshot',   value: "false"],
+          ], wait: true
+        }
+      }
+
+    }
+
+    post {
+        failure {
+            mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+            subject: "Online Applications Test Automation: ${env.JOB_NAME} - FAILED",
+            body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER}.\n Check console ${env.BUILD_URL} to view full results.\n"
+        }
+
+        unstable {
+            echo 'This will run only if the run was marked as unstable'
+        }
+        success {
+            mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+            subject: "Online Applications Test Automation: ${env.JOB_NAME} - SUCCESS",
+            body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${env.BUILD_STATUS}.\nCheck console ${env.BUILD_URL} to view full results.\n"
+        }
+    }
+}

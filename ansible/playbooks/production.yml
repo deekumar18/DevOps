@@ -1,0 +1,24 @@
+---
+- name: Deploy Applications Online revive Service
+  become: yes
+  hosts: production
+  user: jenkins
+
+  vars:
+    env: production
+    env_prefix: pp
+
+  roles:
+    - bootstrap-user
+    - cmg-ansible-role-filebeat # Needs this in order to restart filebeat
+    - cmg-ansible-role-cloudwatch-logs
+    - cmg-ansible-role-logrotate
+    - cmg-ansible-role-firewalld
+    - cmg-ansible-role-ssl-certs
+    - cmg-ansible-role-s3-yumrepo
+    - cmg-ansible-role-nodejs
+    - cmg-ansible-role-prometheus-rpm
+
+  tasks:
+    - name: Include shared tasks
+      include: './tasks/main.yml'

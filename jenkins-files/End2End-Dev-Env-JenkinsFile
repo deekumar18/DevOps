@@ -1,0 +1,89 @@
+#!/usr/bin/env groovy
+@Library('cmg-jenkins-shared-libraries@master') _
+//def cucumberHtmlReportPath = 'target/cucumber-reports'
+
+pipeline {
+    agent {
+        node 'jenkins-slave-01'
+    }
+
+    stages {
+        stage('Build Tests on All Online Applications') {
+            parallel {
+                stage('Build & Deployment for SOAP Rest Gateway') {
+                    agent {
+                        node 'dt-jenkins-slave-rhel-ec2'
+                    }
+                    steps {
+                        build job: 'Build/cmg-soap-rest-gateway-build', \
+                        parameters: [
+                            [$class: 'BooleanParameterValue'  , name: 'runUnitTests',        value: true],
+                            //[$class: 'BooleanParameterValue'  , name: 'runLinter', 	         value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runTests', 	         value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runStaticAnalysis',   value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runAudit', 	         value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runIntegrationTests', value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'create_RPM_AMI',      value: true],
+                            //[$class: 'BooleanParameterValue'  , name: 'updateInfra',         value: true],
+                        ], wait: true
+                    }
+                }
+                stage('Build & Deployment for Online Revive') {
+                    agent {
+                        node 'dt-jenkins-slave-rhel-ec2'
+                    }
+                    steps {
+                        build job: 'Build/cmg-online-revive-build', \
+                        parameters: [
+                            [$class: 'BooleanParameterValue'  , name: 'runUnitTests',         value: true],
+                            //[$class: 'BooleanParameterValue'  , name: 'runLinter', 	          value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runTests', 	          value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runStaticAnalysis',    value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runAudit', 	          value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runIntegrationTests',  value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'create_RPM_AMI',       value: true],
+                            //[$class: 'BooleanParameterValue'  , name: 'updateInfra',          value: true],
+                        ], wait: true
+                    }
+                }
+                stage('Build & Deployment for Profile Selector') {
+                    agent {
+                        node 'dt-jenkins-slave-rhel-ec2-gradle'
+                    }
+                    steps {
+                        build job: 'Build/cmg-profile-selector-build', \
+                        parameters: [
+                            [$class: 'BooleanParameterValue'  , name: 'runUnitTests',        value: true],
+                            //[$class: 'BooleanParameterValue'  , name: 'runLinter', 	         value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runTests', 	         value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runStaticAnalysis',   value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runAudit', 	         value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'runIntegrationTests', value: true],
+                            [$class: 'BooleanParameterValue'  , name: 'create_RPM_AMI',      value: true],
+                            //[$class: 'BooleanParameterValue'  , name: 'updateInfra',         value: true],
+                        ], wait: true
+                    }
+                }
+            }
+        }
+        stage('Build Tests on All Online Applications') {
+	      }
+    }
+
+    post {
+        failure {
+            mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+            subject: "Online Applications Build: ${env.JOB_NAME} - FAILED",
+            body: "<html><font size='3' color='red'>${env.JOB_NAME} - Build # ${env.BUILD_NUMBER}.</font>\n Check console ${env.BUILD_URL} to view full results.</html>\n"
+        }
+
+        unstable {
+            echo 'This will run only if the run was marked as unstable'
+        }
+        success {
+            mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+            subject: "Online Applications Build: ${env.JOB_NAME} - SUCCESS",
+            body: "<font size='3' color='red'>${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${env.BUILD_STATUS}.</font>\n \ Check console ${env.BUILD_URL} to view full results.\n"
+        }
+    }
+}

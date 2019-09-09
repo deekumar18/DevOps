@@ -1,0 +1,142 @@
+# launch command: vagrant up --provider=aws
+require 'vagrant-aws'
+require 'vagrant-env'
+
+# TODO: Not sure why but global variables are required here :(
+
+# App details
+$product = 'Online'
+$entity_name = 'online-revive'
+
+# AMIs
+# develop_ami = 'ami-0d415ce97b8e8e8b6' # AZL2
+$develop_ami = 'ami-0439c2bbcd7dd1a59' # RHEL
+$production_ami = 'ami-0439c2bbcd7dd1a59' # RHEL
+
+# Tag config
+$product_family = '2012 CMG Product Evolution'
+$product_name = 'Applications'
+$role = 'URN Web Service'
+$version = ENV['VERSION']
+$owner = 'charlie.feher@dwp.gsi.gov.uk'
+$cost_code = 'PRJ10389331'
+
+# AWS Config
+$aws_security_groups = ['sg-007020ba66c396bde'] # dm-vagrant-sg
+$aws_subnet_id = 'subnet-0e829bfae4a2a867b' # mgmt-public
+$aws_profile = 'awscmg-dev'
+$aws_region = 'eu-west-2'
+$aws_keypair_name = 'MgmtKeyPair'
+$aws_instance_type = 't2.micro'
+$ssh_username = 'ec2-user'
+$ssh_private_key_path = '~/.ssh/MgmtKeyPair.pem'
+$aws_iam_instance_profile_name = "cmg-dm-jenkinsmaster-ec2-role"
+
+# Ansible Config
+$ansible_raw_args = [
+  "-e TAG=#{ENV['TAG']}",
+  "-e SPRING_PROFILES_ACTIVE=#{ENV['SPRING_PROFILES_ACTIVE']}",
+  "-e DB_USERNAME=#{ENV['DB_USERNAME']}",
+  "-e DB_PASSWORD=#{ENV['DB_PASSWORD']}",
+  "-e DB_HOSTNAME=#{ENV['DB_HOSTNAME']}",
+  "-e DB_NAME=#{ENV['DB_NAME']}"
+]
+
+def configure_aws(config, env)
+  config.vm.provider :aws do |aws, override|
+    override.vm.synced_folder '.', '/vagrant', disabled: true
+    aws.aws_profile = $aws_profile
+    aws.region = $aws_region
+    aws.instance_type = $aws_instance_type
+    aws.security_groups = $aws_security_groups
+    aws.associate_public_ip = 'true'
+    aws.subnet_id = $aws_subnet_id
+    aws.keypair_name = $aws_keypair_name
+    aws.terminate_on_shutdown = true
+    aws.iam_instance_profile_name = $aws_iam_instance_profile_name
+
+
+    aws.ami = choose_ami(env)
+    aws.tags = build_tags(env)
+
+    override.ssh.username = $ssh_username
+    override.ssh.private_key_path = $ssh_private_key_path
+  end
+end
+
+def configure_provisioner(config, env)
+  config.vm.provision 'ansible' do |ansible|
+    ansible.playbook = "../ansible/playbooks/#{env}.yml"
+    ansible.verbose = true
+    ansible.groups = {
+      "#{env}" => ["#{env}"]
+    }
+    ansible.raw_arguments = $ansible_raw_args
+  end
+end
+
+def choose_ami(env)
+  case env
+  when :sandbox, :test
+    $develop_ami
+  when :staging, :production
+    $production_ami
+  end
+end
+
+def choose_env(env)
+  case env
+  when :sandbox, :test
+    "dev-#{env}-vpc"
+  when :staging, :production
+    "prod-#{env}-vpc"
+  end
+end
+
+def build_name(env)
+  "vagrant-#{env}-#{$product}-#{$entity_name}"
+end
+
+def build_tags(env)
+  {
+    'Name' => build_name(env),
+    'Environment' => choose_env(env),
+    'Product Family' => $product_family,
+    'Product' => $product_name,
+    'Role' => $role,
+    'Version' => $version,
+    'Owner' => $owner,
+    'Costcode' => $cost_code,
+    'Persistence' => 'false',
+    'Creator' => ENV['USER'],
+    'scheduler:ec2-startstop' => 'True',
+    'Terraform' => 'False',
+    'Packer' => 'False',
+    'Vagrant' => 'True'
+  }
+end
+
+Vagrant.configure('2') do |config|
+  config.vm.box = 'dummy'
+  config.vm.box_url = 'https://github.com/mitchellh/vagrant-aws/raw/master/dummy.box'
+
+  config.vm.define 'sandbox' do |sandbox_config|
+    configure_aws(sandbox_config, :sandbox)
+    configure_provisioner(sandbox_config, :sandbox)
+  end
+
+  config.vm.define 'test', autostart: false do |test_config|
+    configure_aws(test_config, :test)
+    configure_provisioner(test_config, :test)
+  end
+
+  config.vm.define 'staging', autostart: false do |staging_config|
+    configure_aws(staging_config, :staging)
+    configure_provisioner(staging_config, :staging)
+  end
+
+  config.vm.define 'production', autostart: false do |production_config|
+    configure_aws(production_config, :production)
+    configure_provisioner(production_config, :production)
+  end
+end

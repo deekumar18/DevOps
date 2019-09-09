@@ -1,0 +1,127 @@
+#!/usr/bin/env groovy
+@Library('cmg-jenkins-shared-libraries@master') _
+// def cucumberHtmlReportPath = 'target/cucumber-reports'
+
+pipeline {
+  agent {
+    node 'jenkins-slave-01'
+  }
+  parameters {
+    // string(
+		// 	name: 'soap_rest_commit_id',
+		// 	defaultValue: "",
+		// 	description: 'Enter Commit ID to be used else lastest commit on develop branch will be used.'
+		// )
+
+    string(
+			name: 'online_revive_commit_id',
+			defaultValue: "",
+			description: 'Enter Commit ID to be used else lastest commit on develop branch will be used.'
+		)
+
+    // string(
+		// 	name: 'profile_selector_commit_id',
+		// 	defaultValue: "",
+		// 	description: 'Enter Commit ID to be used else lastest commit on develop branch will be used.'
+		// )
+  }
+
+  stages {
+    stage('Starting Infrastructure creation for All Online Applications') {
+      parallel {
+        stage('Infrastructure creation for SOAP Rest gateway') {
+          agent {
+            node 'dt-jenkins-slave-rhel-ec2'
+          }
+          steps {
+            echo "online_revive_commit_id[${params.online_revive_commit_id}]"
+            echo "profile_selector_commit_id[${params.profile_selector_commit_id}]"
+            echo "soap_rest_commit_id[${params.soap_rest_commit_id}]"
+
+   					build job: 'RPM-AMI/cmg-rpm-ami', \
+   					parameters: [
+              [$class: 'StringParameterValue'  , name: 'repo_name', value: 'cmg-online/cmg-soap-rest-gateway'],
+    					[$class: 'StringParameterValue'  , name: 'environment', value: 'test'],
+    					[$class: 'StringParameterValue'  , name: 'commit_id',   value: "${params.soap_rest_commit_id}"],
+    					[$class: 'BooleanParameterValue' , name: 'createRpm',   value: false],
+    					[$class: 'BooleanParameterValue' , name: 'buildAMI', 		value: true],
+    					[$class: 'BooleanParameterValue' , name: 'createInfra', value: "${params.updateInfra}"],
+    				], wait: true
+    			}
+        }
+        stage('Infrastructure creation for Online Revive') {
+          agent {
+            node 'dt-jenkins-slave-rhel-ec2'
+          }
+          steps {
+   					build job: 'RPM-AMI/cmg-rpm-ami', \
+   					parameters: [
+              [$class: 'StringParameterValue'  , name: 'repo_name',   value: 'cmg-online/cmg-online-revive'],
+    					[$class: 'StringParameterValue'  , name: 'environment', value: 'test'],
+    					[$class: 'StringParameterValue'  , name: 'commit_id',   value: "${params.online_revive_commit_id}"],
+    					[$class: 'BooleanParameterValue' , name: 'createRpm',   value: false],
+    					[$class: 'BooleanParameterValue' , name: 'buildAMI', 		value: true],
+    					[$class: 'BooleanParameterValue' , name: 'createInfra', value: "${params.updateInfra}"],
+            ], wait: true
+          }
+        }
+        stage('Infrastructure creation for Profile Selector') {
+          agent {
+            node 'dt-jenkins-slave-rhel-ec2-gradle'
+          }
+          steps {
+   					build job: 'RPM-AMI/cmg-rpm-ami', \
+   					parameters: [
+              [$class: 'StringParameterValue'  , name: 'repo_name', value: 'cmg-online/cmg-profile-selector'],
+    					[$class: 'StringParameterValue'  , name: 'environment', value: 'test'],
+    					[$class: 'StringParameterValue'  , name: 'commit_id',   value: "${params.profile_selector_commit_id}"],
+    					[$class: 'BooleanParameterValue' , name: 'createRpm',   value: false],
+    					[$class: 'BooleanParameterValue' , name: 'buildAMI', 		value: true],
+    					[$class: 'BooleanParameterValue' , name: 'createInfra', value: "${params.updateInfra}"],
+    				], wait: true
+    			}
+        }
+      }
+    }
+
+    stage ('Running Automation Tests'){
+      environment {
+        run_date = sh (
+          script: "date +%Y%m%d",
+          returnStdout: true
+        ).trim()
+      }
+      steps {
+        build job: 'cmg-online-revive-automation-test', \
+        parameters: [
+          [$class: 'StringParameterValue'  , name: 'session_name', value: "JenkinsTest-${env.run_date}"],
+          [$class: 'StringParameterValue'  , name: 'build_number', value: "Run-Day-${env.run_date}"],
+          [$class: 'StringParameterValue'  , name: 'techstack',    value: "BROWSERSTACK_MULTI"],
+          [$class: 'StringParameterValue'  , name: 'testsuite',    value: "browsertestsAllParallel"],
+          [$class: 'BooleanParameterValue' , name: 'screenshot',   value: "false"],
+        ], wait: true
+      }
+    }
+  }
+
+  post {
+    failure {
+      mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+      subject: "Online Applications Test Automation: ${env.JOB_NAME} - FAILED",
+      body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER}.\n \
+      Check console ${env.BUILD_URL} to view full results.\n"
+    }
+    unstable {
+      mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+      subject: "Online Applications Test Automation: ${env.JOB_NAME} - UNSTABLE",
+      body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER}.\n \
+      Check console ${env.BUILD_URL} to view full results.\n"
+    }
+    success {
+      mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+      subject: "Online Applications Test Automation: ${env.JOB_NAME} - SUCCESS",
+      body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${env.BUILD_STATUS}.\n \
+      Check console ${env.BUILD_URL} to view full results.\n"
+    }
+  }
+}

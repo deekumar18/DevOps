@@ -1,0 +1,19 @@
+# Should not commit .env to gitlab
+# Copy & rename this file to .env
+
+# Environment Variables:
+BASE_URI=https://www.awscmg-dev.dwpcloud.uk/soaprestgw/
+PORT=3000
+NODE_ENV=production
+REDIS_URI=redis://{{ redis_uri }}:{{ redis_port }}/
+SESSION_TTL=3600
+REDIS_KEY_PREFIX=sess:
+BASE_PATH=/onlinerevive/
+LOGS_LOCATION=/var/log/cmg-online-revive
+HTTPS_SERVER=true
+CERT_LOCATION=/etc/ssl/dwpcloud.uk/
+HTTPS_KEY=dwpcloud.uk.key
+HTTPS_CERT=dwpcloud.uk.pem
+REDIS_PASSWORD={{ redis_password }}
+SESSION_SECRET={{ session_secret }}
+TLS_PRODUCTION=true

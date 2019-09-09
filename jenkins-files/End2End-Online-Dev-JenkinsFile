@@ -1,0 +1,73 @@
+#!/usr/bin/env groovy
+@Library('cmg-jenkins-shared-libraries@master') _
+
+pipeline {
+
+    agent {
+        node 'jenkins-slave-01'
+    }
+
+    stages {
+	    stage('Build & Deployment for Online Revive') {
+        steps {
+          build job: 'Build/cmg-online-revive-build', \
+          parameters: [
+            [$class: 'BooleanParameterValue'  , name: 'runUnitTests',         value: true],
+            [$class: 'BooleanParameterValue'  , name: 'runLinter', 	          value: true],
+            [$class: 'BooleanParameterValue'  , name: 'runTests', 	          value: true],
+            [$class: 'BooleanParameterValue'  , name: 'runStaticAnalysis',    value: true],
+            [$class: 'BooleanParameterValue'  , name: 'runAudit', 	          value: true],
+            [$class: 'BooleanParameterValue'  , name: 'runIntegrationTests',  value: true],
+            [$class: 'BooleanParameterValue'  , name: 'create_RPM_AMI',       value: true],
+          ], wait: true
+        }
+      }
+
+      stage ('Creating Infrastructure for Online Revive'){
+
+        environment {
+		      new_ami_id = sh (
+          script: "tail -2 /tmp/packer_build_cmg-online-revive_sandbox | head -1| awk -F: '{print \$2}' | sed 's/ //g'",
+          returnStdout: true
+          ).trim()
+          ami_version = sh (
+          script:  "aws ec2 describe-tags --filters \"Name=resource-id,Values=${new_ami_id}\" \"Name=key,Values=Version\"  --region eu-west-2 --output=text 2>/dev/null | cut -f5",
+          returnStdout: true
+          ).trim()
+        }
+
+        steps {
+          //echo "New AMI Version: [${env.ami_version}]"
+          build job: 'cmg-devops/cmg-terraform-run', \
+          parameters: [
+            [$class: 'StringParameterValue'  , name: 'application',          value: "cms-online"],
+            [$class: 'StringParameterValue'  , name: 'repo_name',            value: "online-app"],
+            [$class: 'StringParameterValue'  , name: 'repo_branch',          value: "master"],
+            [$class: 'StringParameterValue'  , name: 'workspace',            value: "dev-sandbox-vpc"],
+            [$class: 'StringParameterValue'  , name: 'Version',              value: "${env.ami_version}"],
+            [$class: 'StringParameterValue'  , name: 'version_weight',       value: "100"],
+            [$class: 'StringParameterValue'  , name: 'tfvar_name',           value: "terraform.tfvars"],
+			      [$class: 'BooleanParameterValue' , name: 'planInfrastructure',   value: true],
+			      //[$class: 'BooleanParameterValue' , name: 'createInfrastructure', value: true],
+          ], wait: true
+        }
+	    }
+    }
+
+    post {
+        failure {
+            mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+            subject: "Online Applications Build: ${env.JOB_NAME} - FAILED",
+            body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER}.\n Check console ${env.BUILD_URL} to view full results.\n"
+        }
+
+        unstable {
+            echo 'This will run only if the run was marked as unstable'
+        }
+        success {
+            mail to: 'mayank.k.yadav@accenture.com', from: 'jenkins@dwp.com',
+            subject: "Online Applications Build: ${env.JOB_NAME} - SUCCESS",
+            body: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${env.BUILD_STATUS}.\nCheck console ${env.BUILD_URL} to view full results.\n"
+        }
+    }
+}

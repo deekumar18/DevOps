@@ -1,0 +1,139 @@
+#!/usr/bin/env groovy
+@Library('cmg-jenkins-shared-libraries@master') _
+
+pipeline {
+	agent {
+		//node 'jenkins-slave-01'
+		node 'dm-jenkins-slave-rhel-terraform-ec2'
+	}
+
+	options {
+		ansiColor('xterm')
+		buildDiscarder(logRotator(numToKeepStr: '10'))
+	}
+
+	parameters {
+		choice(
+			name: 'environment',
+			choices: [
+				'sandbox',
+				'test',
+			],
+			description: "Specify the environment to build for"
+		)
+
+		string(
+			name: 'commit_id',
+			defaultValue: "",
+			description: 'Enter Commit ID to be used else lastest commit on branch will be used.'
+		)
+
+		booleanParam(
+			name: 'createRpm',
+			defaultValue: false,
+			description: 'Package RPM and push to S3 Yum repository'
+		)
+
+		booleanParam(
+			name: 'buildAMI',
+			defaultValue: false,
+			description: "Create AMI with Packer"
+		)
+
+		booleanParam(
+			name: 'createInfra',
+			defaultValue: false,
+			description: "Create Infrastructure"
+		)
+	}
+
+	stages {
+		stage('Preparation') {
+			steps {
+				cleanWs()
+				script {
+					if (params.commit_id != "" ) {
+						checkout([$class: 'GitSCM', \
+							branches: [[name: "${params.commit_id}"]], \
+							doGenerateSubmoduleConfigurations: false, \
+							userRemoteConfigs: [[credentialsId: '08520488-2fab-49e2-b704-5f809ad72754', url: 'git@gitlab01.awscmg-dev.dwpcloud.uk:cmg-next-generation-services/cmg-online/cmg-online-revive.git']]
+						])
+					} else {
+						checkout scm
+					}
+				}
+
+				script {
+					env.NODEJS_HOME = "${tool 'NodeJS-10.13.0'}"
+					env.PATH="${env.NODEJS_HOME}/bin:${env.PATH}"
+					env.PROJECT_NAME = 'cmg-online-revive@Online'
+					env.BRANCH_NAME = env.GIT_BRANCH
+					sh 'echo $(npm --version)'
+					sh 'echo $(node --version)'
+				}
+				sh "chmod +x DevOps/bin/*"
+			}
+		}
+
+		stage('Install dependencies') {
+			steps {
+				script {
+					sh 'npm install -no-cache'
+				}
+			}
+		}
+
+		stage('Create and push RPM to S3') {
+			when {
+				expression { return params.createRpm }
+			}
+			steps {
+				script {
+				sh "DevOps/bin/create-rpms.sh"
+				sh "DevOps/bin/push-rpms.sh"
+				}
+			}
+		}
+
+		stage('Build Server AMI Image with Packer') {
+			when {
+				expression { return params.buildAMI }
+			}
+			steps {
+				sh "DevOps/bin/install.sh"
+				sh "DevOps/bin/build.sh ${params.environment} ${env.BUILD_TIMESTAMP} | tee /tmp/packer_build_cmg_online_revive_sandbox"
+			}
+		}
+
+		stage('Create Infrastructure') {
+			when {
+				expression { return params.createInfra }
+			}
+
+			environment {
+				new_ami_id = sh (
+					script: "tail -2 /tmp/packer_build_cmg_online_revive_sandbox | head -1| awk -F: '{print \$2}' | sed 's/ //g'",
+					returnStdout: true
+				).trim()
+
+				ami_version = sh (
+					script:  "aws ec2 describe-tags --filters \"Name=resource-id,Values=${env.new_ami_id}\" \"Name=key,Values=Version\"  --region eu-west-2 --output=text 2>/dev/null | cut -f5",
+					returnStdout: true
+					).trim()
+				}
+			steps {
+				build job: 'cmg-devops/cmg-terraform-run', \
+						parameters: [
+						[$class: 'StringParameterValue'  , name: 'application', 	 value: 'cms-online-app'],
+						[$class: 'StringParameterValue'  , name: 'repo_name', 		 value: 'online-app'],
+						[$class: 'StringParameterValue'  , name: 'repo_branch', 	 value: 'master'],
+						[$class: 'StringParameterValue'  , name: 'workspace', 	 	 value: "dev-${params.environment}-vpc"],
+						[$class: 'StringParameterValue'  , name: 'Version', 		 value: "${env.ami_version}"],
+						[$class: 'StringParameterValue'  , name: 'version_weight', 	 value: '100'],
+						[$class: 'BooleanParameterValue' , name: 'planInfrastructure',   value: true],
+						[$class: 'BooleanParameterValue' , name: 'createInfrastructure', value: true],
+						], wait: true
+			}
+		}
+  }
+}

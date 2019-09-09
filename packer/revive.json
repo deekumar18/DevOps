@@ -1,0 +1,131 @@
+{
+  "description": "Builds Online revive Server",
+
+  "min_packer_version": "1.3.3",
+
+  "variables": {
+    "id": "",
+    "timestamp": "",
+
+    "name_prefix": "esb-stub",
+    "env": "{{ env `ENV` }}",
+    "git_commit": "{{ env `GIT_COMMIT` }}",
+    "workspace": "{{ env `WORKSPACE` }}",
+
+    "product_family": "CMG Online",
+    "product": "CMG Online ESB Stub Service",
+    "role": "ESB Stub",
+    "owner": "charlie.feher@dwp.gsi.gov.uk",
+    "cost_code": "PRJ0038091",
+    "version": "{{ env `VERSION` }}"
+  },
+  "provisioners": [
+    {
+      "type": "ansible",
+      "playbook_file": "./DevOps/ansible/playbooks/{{ user `env` }}.yml",
+      "user": "ec2-user",
+      "groups": [
+        "{{ user `name_prefix` }}-{{ user `entity_name` }}",
+        "{{ user `env` }}"
+      ],
+      "extra_arguments": [
+        "--extra-vars", "env={{ user `env` }}",
+        "--extra-vars", "version={{ user `version` }}"
+      ],
+      "host_alias": "{{ user `env` }}"
+    }
+  ],
+  "builders": [
+    {
+      "name": "packer-{{ user `env` }}-{{ user `name_prefix` }}-{{ user `entity_name` }}-{{ user `version` }}_{{ user `timestamp` }}",
+      "type": "amazon-ebs",
+      "profile": "awscmg-dev",
+      "region": "eu-west-2",
+      "instance_type": "t2.micro",
+      "ssh_username": "ec2-user",
+      "ssh_agent_auth": false,
+      "ssh_interface": "private_ip",
+      "ami_name": "{{ user `env` }}-{{ user `name_prefix` }}-{{ user `entity_name` }}-{{ user `version` }}_{{ user `timestamp` }}",
+      "associate_public_ip_address": true,
+      "ssh_interface": "private_ip",
+      "encrypt_boot": true,
+      "kms_key_id": "alias/cmg-devops-generated",
+      "insecure_skip_tls_verify": true,
+      "iam_instance_profile": "cmg-dm-jenkinsmaster-ec2-role",
+
+      "security_group_filter": {
+        "filters": {
+          "tag:Name": "dm-packer-sg"
+        }
+      },
+
+      "source_ami_filter": {
+        "filters": {
+          "virtualization-type": "hvm",
+          "root-device-type": "ebs",
+          "architecture": "x86_64",
+          "name": "{{ user `env` }}-{{ user `name_prefix` }}-base_*"
+        },
+        "owners": [
+          "798861612849"
+        ],
+        "most_recent": "true"
+      },
+
+      "subnet_filter": {
+          "filters": {
+            "tag:Name": "dev-mgmt-vpc-public-*"
+          },
+          "most_free": true
+      },
+
+      "tags": {
+        "Name": "{{ user `env`}}-{{ user `name_prefix` }}-{{ user `entity_name` }}-{{ user `version` }}_{{ timestamp }}",
+        "Environment": "{{ user `workspace` }}",
+        "Product Family": "{{ user `product_family` }}",
+        "Product": "{{ user `product` }}",
+        "Role": "{{ user `role` }}",
+        "Owner": "{{ user `owner` }}",
+        "Costcode": "{{ user `cost_code` }}",
+        "Persistence": "false",
+        "Terraform": "False",
+        "Packer": "True",
+        "Git Commit": "{{ user `git_commit` }}",
+        "Base_AMI_Name": "{{ .SourceAMIName }}",
+        "Version": "{{ user `version` }}"
+      },
+
+      "run_tags": {
+        "Name": "packer-{{ user `env` }}-{{ user `name_prefix` }}-{{ user `entity_name` }}-{{ user `version` }}_{{ user `timestamp` }}",
+        "Environment": "{{ user `workspace` }}",
+        "Product Family": "{{ user `product_family` }}",
+        "Product": "{{ user `product` }}",
+        "Role": "{{ user `role` }}",
+        "Owner": "{{ user `owner` }}",
+        "Costcode": "{{ user `cost_code` }}",
+        "Persistence": "false",
+        "Terraform": "False",
+        "Packer": "True",
+        "Git Commit": "{{ user `git_commit` }}",
+        "Base_AMI_Name": "{{ .SourceAMIName }}",
+        "Version": "{{ user `version` }}"
+      },
+
+      "run_volume_tags": {
+        "Name": "packer-{{ user `env` }}-{{ user `name_prefix` }}-{{ user `entity_name` }}-{{ user `version` }}_{{ user `timestamp` }}",
+        "Environment": "{{ user `workspace` }}",
+        "Product Family": "{{ user `product_family` }}",
+        "Product": "{{ user `product` }}",
+        "Role": "{{ user `role` }}",
+        "Owner": "{{ user `owner` }}",
+        "Costcode": "{{ user `cost_code` }}",
+        "Persistence": "false",
+        "Terraform": "False",
+        "Packer": "True",
+        "Git Commit": "{{ user `git_commit` }}",
+        "Base_AMI_Name": "{{ .SourceAMIName }}",
+        "Version": "{{ user `version` }}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/bootstrap-user.git
+  version: 0.1.2
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-s3-yumrepo.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-firewalld.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-filebeat.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-ssl-certs.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-nodejs.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-cloudwatch-logs.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-logrotate.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-prometheus-rpm.git
+  version: master
+  scm: git
+
+- src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-clamav-scan.git
+  version: master
+  scm: git
+
+# - src: git+https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-ansible/roles/cmg-ansible-role-tomcat.git
+#   version: master
+#   scm: git

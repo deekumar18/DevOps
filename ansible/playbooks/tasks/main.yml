@@ -1,0 +1,43 @@
+- name: yum-clean-metadata
+  command: yum clean metadata
+  args:
+    warn: no
+
+- name: Install RPM esb-stub
+  yum:
+    name: "{{ application_package_name }}"
+    state: latest
+    update_cache: yes
+
+- name: Enable service cmg-esb-stub
+  service:
+    name: "{{ application_package_name }}"
+    enabled: yes
+
+- name: Create environment file
+  template:
+    src: "{{ env_prefix }}-env.j2"
+    dest: /opt/{{ application_package_name }}/.env
+    owner: "{{ njsadmin_username }}"
+    group: "{{ njsadmin_group }}"
+
+- name: Set ownership of the application folder
+  file:
+    dest: "/opt/{{ application_package_name }}"
+    owner: "{{ njsadmin_username }}"
+    group: "{{ njsadmin_group }}"
+    mode: 0710
+    recurse: yes
+    state: directory
+
+- name: Restart service cmg-esb-stub
+  service:
+    name: "{{ application_package_name }}"
+    state: restarted
+
+- name: upgrade all packages
+  yum:
+    name: '*'
+    state: latest
+    update_cache: yes
+    exclude: python-urllib3

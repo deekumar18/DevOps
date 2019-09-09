@@ -1,0 +1,279 @@
+#!/usr/bin/env groovy
+
+@Library('cmg-jenkins-shared-libraries@master') _
+
+pipeline {
+  agent {
+    node 'jenkins-slave-01'
+  }
+
+  options {
+    ansiColor('xterm')
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+
+  parameters {
+    choice(
+      name: 'environment',
+      choices: [
+        'sandbox',
+        'test',
+        'ithc',
+        'staging',
+        //'production'
+      ],
+      description: "Specify the environment to build for"
+    )
+
+    booleanParam(
+      name: 'runStaticAnalysis',
+      defaultValue: false,
+      description: 'Run static code analysis'
+    )
+
+    booleanParam(
+     name: 'runAudit',
+     defaultValue: false,
+     description: 'Run NPM Audit'
+    )
+
+    booleanParam(
+     name: 'runLinter',
+     defaultValue: false,
+     description: 'Run NPM Linter'
+    )
+
+    booleanParam(
+      name: 'runUnitTests',
+      defaultValue: false,
+      description: 'Run NPM Unit Tests'
+    )
+
+    booleanParam(
+      name: 'runIntegrationTests',
+      defaultValue: false,
+      description: 'Run NPM Integration Tests'
+    )
+
+   booleanParam(
+     name: 'runZapTests',
+     defaultValue: false,
+     description: 'Run Zap Tests'
+   )
+
+    booleanParam(
+      name: 'createRpm',
+      defaultValue: true,
+      description: 'Package RPM and push to S3 Yum repository'
+    )
+
+    booleanParam(
+      name: 'buildAMI',
+      defaultValue: true,
+      description: "Create AMI with Packer"
+    )
+
+    booleanParam(
+      name: 'createDockerImage',
+      defaultValue: false,
+      description: 'Package Docker image and push to ECR'
+    )
+  }
+
+  stages {
+    stage('Preparation') {
+      steps {
+        cleanWs()
+        checkout scm
+
+        script {
+          env.NODEJS_HOME = "${tool 'NodeJS-10.13.0'}"
+          env.PATH="${env.NODEJS_HOME}/bin:${env.PATH}"
+
+          env.PROJECT_NAME = 'cmg-online-revive@online'
+
+          // get round the fact we are not using multiple pipeline job
+          env.BRANCH_NAME = env.GIT_BRANCH
+          sh 'echo $(npm --version)'
+          sh 'echo $(node --version)'
+          sh 'pwd'
+        }
+
+        // cmgSlackNotifyStart(
+        //   SLACK_CHANNEL: env.SLACK_CHANNEL,
+        //   SLACK_TOKEN: env.SLACK_TOKEN
+        // )
+      }
+    }
+
+    stage('Install dependencies') {
+      steps {
+        script {
+          sh 'npm install -no-cache'
+        }
+      }
+    }
+
+    stage('Test - NPM audit') {
+      when {
+        expression { return params.runAudit }
+      }
+      steps {
+        script {
+          def highVuln = sh(script: 'npm audit --json | jq -r ".metadata.vulnerabilities.high"', returnStdout: true).trim()
+
+          if (Integer.parseInt("${highVuln}") > 0) {
+            currentBuild.result = "UNSTABLE"
+          }
+        }
+      }
+    }
+
+    stage('Test - Static Code Analysis Tests') {
+      when {
+        expression { return params.runStaticAnalysis }
+      }
+      steps {
+        cmgCheckmarxTest(
+          AWS_REGION: env.AWS_REGION,
+          DOCKER_REPO: env.DOCKER_REPO,
+          PROJECT_NAME: env.PROJECT_NAME
+        )
+      }
+    }
+
+    stage('Test - Run linter') {
+      when {
+        expression { return params.runLinter }
+      }
+      steps {
+        script {
+          sh 'npm run test:lint'
+        }
+      }
+    }
+
+    stage('Test - Run unit tests') {
+      when {
+        expression { return params.runUnitTests }
+      }
+      steps {
+        script {
+          sh 'npm run test'
+        }
+      }
+    }
+
+    // stage('Test - Run integration tests') {
+    //   when {
+    //     expression { return params.runIntegrationTests }
+    //   }
+    //   agent {
+    //     node 'dt-jenkins-slave-rhel-ec2'
+    //   }
+    //   steps {
+    //     script {
+    //       sh 'npm install'
+    //       sh 'npm run test:int'
+    //     }
+    //   }
+    // }
+
+    stage('Test - Zap Tests') {
+      when {
+        expression { return params.runZapTests }
+      }
+      steps {
+        cmgZapTest(
+          SERVICE_NAME: "cmg-applications-frontend",
+          SERVICE_URL: "https://frontend.applications.test.awscmg-dev.dwpcloud.uk"
+        )
+      }
+    }
+
+    stage('Test - Generate coverage report') {
+      when {
+        expression { return params.runTests }
+      }
+      steps {
+        script {
+          sh 'npm run coverage'
+        }
+
+        publishHTML([
+          allowMissing: false,
+          alwaysLinkToLastBuild: true,
+          keepAll: true,
+          reportDir: ".coverage",
+          reportFiles: 'index.html',
+          reportName: "Coverage Report: ${env.PROJECT_NAME}".toString(),
+          reportTitles: 'coverage-report'
+        ])
+      }
+    }
+
+    stage('Create and push RPM to S3') {
+      when {
+        expression { return params.createRpm }
+      }
+      steps {
+        script {
+          sh 'chmod +x DevOps/bin/*'
+          sh 'DevOps/bin/create-rpms.sh'
+          sh 'DevOps/bin/push-rpms.sh'
+        }
+      }
+    }
+
+    stage('Build Server AMI Image with Packer') {
+      when {
+        expression { return params.buildAMI }
+      }
+      steps {
+        sh "DevOps/bin/install.sh"
+        sh "DevOps/bin/build.sh ${params.environment}"
+      }
+    }
+
+    stage('Deploy update to running instances') {
+      when {
+        expression { return params.deployWithAnsible }
+      }
+      steps {
+        sshagent(credentials: [env.SSH_CREDENTIALS]) {
+          cmgAnsibleDeploy(
+            ENV: params.environment,
+            PLAYBOOK: "DevOps/ansible/playbooks/${params.environment}.yml",
+            EXTRA_ARGS: "${env.ANSIBLE_LOG_LEVEL}"
+          )
+        }
+      }
+    }
+
+    stage('Push to Docker ECR') {
+      when {
+        expression { return params.createDockerImage }
+      }
+      steps {
+        sh "\$(aws ecr get-login --no-include-email --region ${env.AWS_REGION})"
+        sh "docker build ."
+        sh "docker tag ${env.DOCKER_REPO}/cmg-online-revive:latest"
+        sh "docker push ${env.DOCKER_REPO}/cmg-online-revive:latest"
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: '.checkmarx/*', fingerprint: true, allowEmptyArchive: true
+
+      cmgSlackNotify(
+        BUILD_RESULT: currentBuild.currentResult,
+        SLACK_CHANNEL: env.SLACK_CHANNEL,
+        SLACK_TOKEN: env.SLACK_TOKEN
+      )
+
+      cleanWs()
+    }
+  }
+}

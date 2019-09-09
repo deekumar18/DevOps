@@ -1,0 +1,242 @@
+#!/usr/bin/env groovy
+@Library('cmg-jenkins-shared-libraries@master') _
+
+pipeline {
+	agent {
+		//node 'dt-jenkins-slave-rhel-ec2'
+		node 'jenkins-slave-01'
+	}
+
+	options {
+		ansiColor('xterm')
+		buildDiscarder(logRotator(numToKeepStr: '10'))
+	}
+
+	parameters {
+
+		string(
+			name: 'commit_id',
+			defaultValue: "",
+			description: 'Enter Commit ID to be used else lastest commit on develop branch will be used.'
+		)
+
+		booleanParam(
+			name: 'runUnitTests',
+			defaultValue: true,
+			description: 'Run NPM Unit Tests'
+		)
+
+		booleanParam(
+				name: 'runLinter',
+				defaultValue: true,
+				description: 'Run NPM Linter'
+		)
+
+		booleanParam(
+				name: 'runTests',
+				defaultValue: true,
+				description: 'Run Code Coverage Analysis'
+		)
+
+		booleanParam(
+			name: 'runStaticAnalysis',
+			defaultValue: true,
+			description: 'Run Static Code Analysis'
+		)
+
+		booleanParam(
+			name: 'runAudit',
+			defaultValue: true,
+			description: 'Run NPM Audit'
+		)
+
+		booleanParam(
+			name: 'runIntegrationTests',
+			defaultValue: true,
+			description: 'Run NPM Integration Tests'
+		)
+
+		booleanParam(
+			name: 'create_RPM_AMI',
+			defaultValue: false,
+			description: 'Create RPM/AMI'
+		)
+
+		booleanParam(
+			name: 'updateInfra',
+			defaultValue: false,
+			description: "Update Infra with new AMI"
+		)
+	}
+
+	stages {
+		stage('Preparation') {
+			steps {
+				cleanWs()
+				script {
+					if ( params.commit_id == "" ) {
+						echo "No Commit ID Provided"
+						commit_id = sh(returnStdout: true, script: 'git ls-remote git@gitlab01.awscmg-dev.dwpcloud.uk:cmg-next-generation-services/cmg-online/cmg-online-revive.git refs/heads/develop | cut -f1')
+						env.commitID = "${commit_id}"
+					} else {
+						echo "Commit ID Provided [${params.commit_id}]"
+						env.commitID = "${params.commit_id}"
+					}
+
+					checkout([$class: 'GitSCM', \
+						branches: [[name: "${env.commitID}"]], \
+						doGenerateSubmoduleConfigurations: false, \
+						userRemoteConfigs: [[credentialsId: '08520488-2fab-49e2-b704-5f809ad72754', url: 'git@gitlab01.awscmg-dev.dwpcloud.uk:cmg-next-generation-services/cmg-online/cmg-online-revive.git']]
+					])
+					env.PROJECT_NAME = 'cmg-online-revive@online'
+					env.BRANCH_NAME = env.GIT_BRANCH
+					env.NODEJS_HOME = "${tool 'NodeJS-12.8.0'}"
+					env.PATH="${env.NODEJS_HOME}/bin:${env.PATH}"
+
+				}
+			}
+		}
+
+		stage('Install dependencies') {
+			steps {
+				script {
+					sh 'npm --version'
+					sh 'npm install -no-cache'
+				}
+			}
+		}
+
+		stage('Test - Run unit tests') {
+			when {
+				expression { return params.runUnitTests }
+			}
+			steps {
+				script {
+					sh 'npm run test'
+				}
+			}
+		}
+
+		stage('Test - Run linter') {
+			when {
+				expression { return params.runLinter }
+			}
+			steps {
+				script {
+					sh 'npm run lint'
+				}
+			}
+		}
+
+		stage('Test - NPM audit') {
+			when {
+				expression { return params.runAudit }
+			}
+			steps {
+				script {
+					def highVuln = sh(script: 'npm audit --json | jq -r ".metadata.vulnerabilities.high"', returnStdout: true).trim()
+
+					if (Integer.parseInt("${highVuln}") > 0) {
+						currentBuild.result = "UNSTABLE"
+					}
+				}
+			}
+   		}
+
+ 		stage('Test - Run integration tests (NO Test in this)') {
+ 			when {
+ 				expression { return params.runIntegrationTests }
+ 			}
+			// agent {
+			// 	node 'dt-jenkins-slave-rhel-ec2'
+			// }   // Uncomment when tests are written for integration
+ 			steps {
+ 				script {
+ 					// sh 'npm install'
+ 					// sh 'npm run test:int'
+					echo "NO INTEGRATION TEST FOR cmg-online-revive"
+ 				}
+ 			}
+ 		}
+
+		stage('Test - Generate coverage report') {
+			when {
+				expression { return params.runTests }
+			}
+			steps {
+				script {
+					sh 'npm run coverage'
+				}
+
+				publishHTML([
+					allowMissing: false,
+					alwaysLinkToLastBuild: true,
+					keepAll: true,
+					reportDir: ".coverage",
+					reportFiles: 'index.html',
+					reportName: "Coverage Report: ${env.PROJECT_NAME}".toString(),
+					reportTitles: 'coverage-report'
+				])
+			}
+		}
+
+		stage('Test - Static Code Analysis Tests') {
+			when {
+				expression { return params.runStaticAnalysis }
+			}
+			steps {
+				cmgCheckmarxTest(
+					AWS_REGION: env.AWS_REGION,
+					DOCKER_REPO: env.DOCKER_REPO,
+					PROJECT_NAME: env.PROJECT_NAME
+				)
+
+				//                cmgBlackduckTest(
+				//                    AWS_REGION: env.AWS_REGION,
+				//                    DOCKER_REPO: env.DOCKER_REPO,
+				//                    PROJECT_NAME: env.PROJECT_NAME,
+				//                    SERVICE_NAME: env.SERVICE_NAME,
+				//                    SERVICE_URL: env.SERVICE_URL,
+				//                    BRANCH_NAME: env.BRANCH_NAME
+				//               )
+
+			}
+		}
+
+		stage ('Create RPM and AMI') {
+		  when {
+				expression { return params.create_RPM_AMI }
+		 		expression { return params.runAudit }
+		 		expression { return params.runUnitTests }
+		 		expression { return params.runLinter }
+				expression { return params.runTests }
+		 		expression { return params.runStaticAnalysis }
+			}
+
+			steps {
+					echo "Building RPM and then AMI against commitID [${env.commitID}]"
+					build job: 'RPM-AMI/cmg-rpm-ami', \
+					parameters: [
+						[$class: 'StringParameterValue'  , name: 'repo_name', value: 'cmg-online/cmg-online-revive'],
+						[$class: 'StringParameterValue'  , name: 'environment', value: 'sandbox'],
+						[$class: 'StringParameterValue'  , name: 'commit_id', 	value: "${env.commitID}"],
+						[$class: 'BooleanParameterValue' , name: 'createRpm',   value: true],
+						[$class: 'BooleanParameterValue' , name: 'buildAMI', 		value: true],
+						[$class: 'BooleanParameterValue' , name: 'createInfra', value: "${params.updateInfra}"],
+					], wait: true
+			}
+		}
+	}
+
+	post {
+		always {
+			archiveArtifacts artifacts: '.checkmarx/*', fingerprint: true, allowEmptyArchive: true
+			cmgSlackNotify(
+				BUILD_RESULT: currentBuild.currentResult,
+				SLACK_CHANNEL: env.SLACK_CHANNEL,
+				SLACK_TOKEN: env.SLACK_TOKEN
+			)
+			cleanWs()
+		}
+	}
+}

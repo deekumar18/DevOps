@@ -1,0 +1,173 @@
+#!/usr/bin/env groovy
+
+// Created by Sherif Helmy 06/06/2019
+// Modified by Sherif Helmy 24/06/2019
+
+// Declaring the cmg jenkins shared libs: "https://gitlab.awscmg-dev.dwpcloud.uk/cmg-next-generation-services/DevOps/cmg-jenkins-shared-libraries"
+@Library('cmg-jenkins-shared-libraries@master') _
+
+import jenkins.model.Jenkins
+import hudson.model.*
+
+def remote = [:]
+
+//Pipeline starts here
+pipeline {
+  agent {
+    node 'jenkins-slave-01'
+  }
+
+
+//Log rotator
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+  
+  stages {
+  
+// This step is for cleaning the jenkins workspace and checking out the code    
+        stage('Prepare Workspace') {
+        steps {
+            cleanWs()
+            checkout scm
+            sh 'chmod +x DevOps/*'
+                
+// Defining env vars
+        script {
+        //Define Global Environment variables
+            env.target_path = '/srv/nodejs-apps/'
+            env.system_name = 'cmg-online-revive'
+            env.server_name = 'dt-portal'
+        
+        //Define Jenkins shared Libs related variables
+            env.AWS_REGION = 'eu-west-2'
+            env.DOCKER_REPO = '798861612849.dkr.ecr.eu-west-2.amazonaws.com'
+            env.PROJECT_NAME = "${env.system_name}@online"
+            env.BRANCH_NAME = 'develop'
+            env.SERVICE_NAME = "${env.system_name}"
+            env.SERVICE_URL = 'https://www.awscmg-dev.dwpcloud.uk/onlinerevive'
+
+        //Define Application related Environment variables  
+
+
+        //Define NodeJS related Environment variables
+            env.NODEJS_HOME = "${tool 'NodeJS-10.13.0'}"
+            env.PATH="${env.NODEJS_HOME}/bin:${env.PATH}"
+            sh 'echo $(npm --version)'
+
+        //Configure sshSteps plugin
+            remote.name = "${env.server_name}"
+            remote.host = "${env.server_name}.awscmg-dev.dwpcloud.uk"
+            remote.user = 'jenkins'
+            remote.identityFile =  '/home/jenkins/.ssh/id_rsa'
+            remote.knownHosts = '/home/jenkins/.ssh/known_hosts'
+                }
+                }
+                }
+
+// This step is for Checking CMG Nexus on remote host  
+  stage('Check Nexus CMG') {
+    steps{
+    sh './DevOps/npm-config.sh'
+  }
+  }
+  
+// This step is for building the package 
+  stage('Build the code') {
+    steps{
+    sh "npm install -y"
+     }
+  }
+// This step is for running unit tests  
+  // stage('Unit testing') {
+    // sh "npm run test -y"
+  // }
+
+// This step is for running code coverage checks  
+  // stage('Code coverage checks') {
+    // sh "npm run test:coverage -y"
+  // }
+
+// This step is for performing Static code analysis
+stage('Static code analysis') {
+    steps{
+    cmgSonarqubeTest(
+     AWS_REGION: env.AWS_REGION,
+     DOCKER_REPO: env.DOCKER_REPO,
+     PROJECT_NAME: env.PROJECT_NAME,
+     SONAR_HOST_URL: "http://sonarqube01.awscmg-dev.dwpcloud.uk:9000",
+     SONAR_SOURCES: "src",
+     SONAR_TESTS: ""
+     )
+
+//    cmgBlackduckTest(
+//     AWS_REGION: env.AWS_REGION,
+//     DOCKER_REPO: env.DOCKER_REPO,
+//     PROJECT_NAME: env.PROJECT_NAME,
+//     SERVICE_NAME: env.SERVICE_NAME,
+//     SERVICE_URL: env.SERVICE_URL,
+//     BRANCH_NAME: env.BRANCH_NAME
+//   )
+
+    cmgCheckmarxTest(
+     AWS_REGION: env.AWS_REGION,
+     DOCKER_REPO: env.DOCKER_REPO,
+     PROJECT_NAME: env.PROJECT_NAME
+    )
+  }
+  }
+
+
+// This step is for deploying node package to the remote host  
+  stage('Package deployment') {
+    steps{
+    script{
+    sshCommand(remote: remote,command: "rm -fr ${env.target_path}/${env.system_name}")
+    sshPut (remote: remote, from: '.', into: "${env.target_path}")
+  }
+  }
+  }
+
+// This step is for Adding the .env file  
+  stage('Add .env file') {
+    steps{
+    script{
+    sshPut remote: remote, from: 'DevOps/env-file', into: "${env.target_path}/${env.system_name}/.env"
+  }
+  }
+  }
+
+// This step is for Starting NPM on remote host  
+  stage('Start Node service') {
+    steps{
+    script{
+    sshScript remote: remote, script: 'DevOps/start-service.sh'
+  }
+  }
+  }
+
+// This step is for Performing sanity checks on system 
+  stage('Sanity checks') {
+    steps{
+    script{
+    sshScript remote: remote, script: 'DevOps/basic-app-sanity-check.sh'
+  }
+  }
+  }
+}
+// Publishing the Code coverage HTML report
+//  post {
+//  always {
+//  stage("Test - coverage")
+//    publishHTML([
+//      allowMissing: false,
+//      alwaysLinkToLastBuild: true,
+//      keepAll: true,
+//      reportDir: "coverage/lcov-report/",
+//      reportFiles: 'index.html',
+//      reportTitles: 'coverage-report'
+//    ])
+//  } 
+// }
+
+}

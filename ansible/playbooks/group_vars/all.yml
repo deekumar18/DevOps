@@ -1,0 +1,117 @@
+# Domain Setup
+product: esb-stub
+entity_name: esb-stub
+domain_name: "awscmg-dev.dwpcloud.uk"
+host_name: "{{ entity_name }}.{{ product }}.{{ env }}.{{ domain_name }}"
+application_package_name: cmg-esb-stub
+ssm_cloudwatch_logs_group: "{{ env_prefix }}-{{ product }}-{{ entity_name }}-logs"
+
+# bootstrap-user
+njsadmin_username: njsadmin
+njsadmin_group: njsadmin
+njsadmin_uid: 2002
+njsadmin_gid: 2002
+
+user_groups:
+  - groupname: "{{ njsadmin_group }}"
+    gid: "{{ njsadmin_gid }}"
+    sudo: False
+    users:
+      - username: "{{ njsadmin_username }}"
+        uid: "{{ njsadmin_uid }}"
+        create_home: True
+        public_key: False
+        sudo: False
+
+# cmg-ansible-role-nodejs-app
+redis_uri: "{{ env_prefix }}-cms-redis-1.{{ domain_name }}"
+redis_port: 56379
+redis_password: "{{ lookup('aws_ssm', '/dev-sandbox-vpc/redis/auth-token/master', decrypt=True, region='eu-west-2')}}"
+# session_secret: "{{ lookup('aws_ssm', '{{ env }}-applications-session-secret', decrypt=True, region='eu-west-2')}}"
+session_secret: SuperSecureSecret666
+
+# cmg-ansible-role-clamav
+clamav_include_dirs:
+  - /opt/cmg-esb-stub
+  - /home
+
+# cmg-ansible-role-filebeat
+filebeat_elk_hostname: "{{ env_prefix }}-elk.{{ domain_name }}"
+filebeat_tags:
+  - "{{ env_prefix }}-{{ product }}-{{ entity_name }}"
+  - "{{ env }}"
+filebeat_fields_env: "{{ env_prefix }}-{{ product }}-{{ entity_name }}"
+filebeat_paths:
+  - /var/log/messages
+  - /var/log/*.log
+  - /var/log/audit/*.log
+  - /var/log/nginx/*.log
+  - /var/log/clamd/*.log
+  - /var/log/cmg-esb-stub/*.log
+
+# cmg-ansible-s3-yumrepo
+s3_yumrepo_base_url: "https://s3.eu-west-2.amazonaws.com/cmg-code-promotion-dev/RPMS/{{ application_package_name }}"
+
+# cmg-ansible-role-cloudwatch-logs
+agent_log_collection: []
+log_group_name: "{{ env_prefix }}-{{ product }}-{{ entity_name }}-logs"
+log_stream_name: main
+
+collect_list:
+  - file_path: /var/log/messages
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "system-messages"
+    timezone: "UTC"
+
+  - file_path: /var/log/audit/*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "system-audit-logs"
+    timezone: "UTC"
+
+  - file_path: /var/log/*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "system"
+    timezone: "UTC"
+
+  - file_path: /var/log/clamd/*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "clamd"
+    timezone: "UTC"
+
+  - file_path: /var/log/cmg-esb-stub/trace*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "cmg-esb-stub-trace-logs"
+    timezone: "UTC"
+
+  - file_path: /var/log/cmg-esb-stub/debug*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "cmg-esb-stub-debug-logs"
+    timezone: "UTC"
+
+  - file_path: /var/log/cmg-esb-stub/error*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "cmg-esb-stub-error-logs"
+    timezone: "UTC"
+
+  - file_path: /var/log/cmg-esb-stub/info*.log
+    log_group_name: "{{ log_group_name }}"
+    log_stream_name: "cmg-esb-stub-info-logs"
+    timezone: "UTC"
+
+# cmg-ansible-role-firewalld
+firewall_state: started
+firewall_enabled_at_boot: true
+firewalld_allow_ports:
+  - port: "9100/tcp"
+  - port: "3000/tcp"
+firewalld_allow_services:
+  - service: "https"
+
+#cmg-ansible-role-nodejs
+nodejs_version: "10.x"
+
+#cmg-ansible-role-ssl-certs
+ssl_certs_common_name: "dwpcloud.uk"
+ssl_certs_days: 3650
+ssl_certs_path_owner: "njsadmin"
+ssl_certs_path_group: "njsadmin"
